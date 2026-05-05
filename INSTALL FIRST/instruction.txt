@@ -1,0 +1,1 @@
+To install the font, simple open the .zip file and extract the .ttf font in the "C:\Windows\Fonts"
