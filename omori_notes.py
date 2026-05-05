@@ -1,13 +1,28 @@
 import subprocess
 import sys
-from PIL import Image, ImageTk
-import tkinter as tk
+
+if sys.version_info < (3, 12) or sys.version_info >= (3, 15):
+    print("This program requires Python 3.12, 3.13, or 3.14.")
+    print("Please download it from https://www.python.org/downloads/")
+    input("Press Enter to exit...")
+    sys.exit()
+
+try:
+    from PIL import Image, ImageTk
+except ImportError:
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "pillow"])
+    from PIL import Image, ImageTk
 
 try:
     import pygame
 except ImportError:
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "pygame"])
+    if sys.version_info >= (3, 14):
+        subprocess.check_call([sys.executable, "-m", "pip", "install", "pygame-ce"])
+    else:
+        subprocess.check_call([sys.executable, "-m", "pip", "install", "pygame"])
     import pygame
+
+import tkinter as tk
 
 pygame.mixer.init()
 pygame.mixer.music.load("music/OMORI - Final Duet.mp3")
