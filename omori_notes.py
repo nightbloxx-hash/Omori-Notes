@@ -100,15 +100,35 @@ exit_frame = tk.Frame(my_canvas, bg="white", padx=4, pady=4)
 exit_btn = tk.Button(exit_frame, text="Exit", font=btn_font, bg="black", fg="white", relief="flat", command=root.destroy, width=10, height=2)
 exit_btn.pack()
 
-my_canvas.create_window(int(screen_width * 0.41), int(screen_height * 0.82), window=write_frame)
-my_canvas.create_window(int(screen_width * 0.61), int(screen_height * 0.82), window=exit_frame)
+write_window = my_canvas.create_window(0, 0, window=write_frame)
+exit_window = my_canvas.create_window(0, 0, window=exit_frame)
+
+def place_buttons():
+    w = root.winfo_width()
+    h = root.winfo_height()
+
+    my_canvas.coords(write_window, int(w * 0.41), int(h * 0.82))
+    my_canvas.coords(exit_window, int(w * 0.61), int(h * 0.82))
 
 char_img = tk.PhotoImage(file="bgi/omori_logo.png")
-my_canvas.create_image(680, 340, image=char_img, anchor="center")
+
+my_canvas.create_image(
+    int(screen_width * 0.49),   # adjust this value
+    int(screen_height * 0.45),  # adjust this value
+    image=char_img,
+    anchor="center"
+)
 
 logo_pil = Image.open("bgi/music_logo.png").convert("RGBA").resize((300, 300))
 logo_img = ImageTk.PhotoImage(logo_pil)
-music_icon = my_canvas.create_image(1250, 100, image=logo_img, anchor="center")
+music_icon = my_canvas.create_image(
+    int(screen_width * 1.0),  # near right edge
+    int(screen_height * -0.04), # near top
+    image=logo_img,
+    anchor="ne"
+)
 my_canvas.tag_bind(music_icon, "<Button-1>", show_music_window)
+
+root.bind("<Configure>", lambda e: place_buttons())
 
 root.mainloop()
