@@ -3,6 +3,7 @@ import sys
 import random
 import os
 import json
+import glob
 from datetime import datetime
 
 QUOTES = [
@@ -48,6 +49,52 @@ except ImportError:
 import tkinter as tk
 from tkinter import messagebox
 
+# ─── CREATE SAVED NOTES FOLDER AND LOAD SAVED NOTES ──────────────
+SAVED_NOTES_DIR = "Saved Notes"
+if not os.path.exists(SAVED_NOTES_DIR):
+    os.makedirs(SAVED_NOTES_DIR)
+    print(f"Created '{SAVED_NOTES_DIR}' folder for saving notes.")
+
+def load_saved_notes_as_notes():
+    """Load all saved .txt files from Saved Notes folder and convert to notes_data format."""
+    saved_files = glob.glob(os.path.join(SAVED_NOTES_DIR, "*.txt"))
+    loaded_notes = {}
+    max_id = 0
+    
+    for filepath in saved_files:
+        try:
+            with open(filepath, "r", encoding="utf-8") as f:
+                content = f.read()
+            
+            # Parse the saved note content
+            lines = content.split('\n')
+            title = "Untitled"
+            date = datetime.now().strftime("%Y-%m-%d %H:%M")
+            note_content = content
+            
+            # Try to extract title and date from the saved format
+            for i, line in enumerate(lines):
+                if line.startswith("Title: "):
+                    title = line[7:].strip()
+                elif line.startswith("Date: "):
+                    date = line[6:].strip()
+                elif line.startswith("==="):
+                    note_content = '\n'.join(lines[i+1:]).strip()
+                    break
+            
+            # Generate a unique ID
+            max_id += 1
+            loaded_notes[max_id] = {
+                "title": title,
+                "date": date,
+                "content": note_content,
+                "filepath": filepath  # Store the filepath for deletion
+            }
+        except Exception as e:
+            print(f"Error loading saved note {filepath}: {e}")
+    
+    return loaded_notes, max_id
+
 # ─── MUSIC INITIALIZATION ────────────────────────────────────────
 pygame.mixer.init()
 pygame.mixer.music.load("music/OMORI - Final Duet.mp3")
@@ -82,9 +129,6 @@ def change_music(song):
     pygame.mixer.music.play(-1)
 
 # ─── MUSIC WINDOW ────────────────────────────────────────────────
-# We store the last known screen position for the bgm button so
-# show_music_window can position itself even when called from the
-# write interface (where music_icon doesn't exist on the canvas).
 _bgm_screen_x = [100]
 _bgm_screen_y = [100]
 music_window_open = None
@@ -92,7 +136,7 @@ music_window_open = None
 def show_music_window(event=None):
     global music_window_open
 
-    if music_window_open and tk.Toplevel.winfo_exists(music_window_open):
+    if music_window_open and music_window_open.winfo_exists():
         music_window_open.lift()
         return
 
@@ -132,7 +176,7 @@ def show_music_window(event=None):
     mc.create_text(150, 240, text="Volume", font=("Schoolbell", 14), fill="white")
     vol = tk.Scale(mc, from_=0, to=100, orient="horizontal", length=200,
                    bg="black", fg="white", highlightthickness=0, troughcolor="white",
-                   command=lambda v: pygame.mixer.music.set_volume(int(v) / 100))
+                   command=lambda v: pygame.mixer.music.set_volume(float(v) / 100))
     vol.set(100)
     mc.create_window(150, 280, window=vol)
 
@@ -144,6 +188,20 @@ def show_music_window(event=None):
     close_btn.bind("<Leave>", lambda e: on_leave(close_btn))
     close_btn.pack()
     mc.create_window(150, 330, window=close_frame)
+
+
+# ─── QUOTE ROTATION FUNCTION ─────────────────────────────────────
+quote_text_id = None
+quote_index = 0
+
+def rotate_quote():
+    """Rotate quotes randomly and continuously."""
+    global quote_text_id
+    new_quote = random.choice(QUOTES)
+    if quote_text_id is not None:
+        my_canvas.itemconfig(quote_text_id, text=new_quote)
+    # Schedule next quote change in 10 seconds
+    root.after(10000, rotate_quote)
 
 
 # ─── FILE HANDLING ────────────────────────────────────────────────
@@ -166,15 +224,256 @@ def write_json(filepath, data):
     with open(filepath, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
-notes_data, _notes_max = load_json(NOTES_FILE)
+# Load notes from both JSON and Saved Notes folder
+json_notes, json_max = load_json(NOTES_FILE)
+saved_notes, saved_max = load_saved_notes_as_notes()
+
+# Merge notes (prioritize saved notes from folder)
+notes_data = {**json_notes, **saved_notes}
+max_note_id = max(json_max, saved_max) if json_max or saved_max else 0
+
 trash_data, _trash_max = load_json(TRASH_FILE)
 
-note_counter  = [_notes_max]
+note_counter  = [max_note_id]
 trash_counter = [_trash_max]
 active_note_id = [None]
 
-def save_notes(): write_json(NOTES_FILE, notes_data)
-def save_trash(): write_json(TRASH_FILE, trash_data)
+def save_notes(): 
+    # Only save non-file-linked notes to JSON (notes that exist only in app memory)
+    json_savable = {}
+    for nid, note in notes_data.items():
+        if "filepath" not in note:  # Don't save file-linked notes to JSON again
+            json_savable[nid] = {k: v for k, v in note.items() if k != "filepath"}
+    write_json(NOTES_FILE, json_savable)
+    
+def save_trash(): 
+    write_json(TRASH_FILE, trash_data)
+
+# ─── AUTO-SAVE CURRENT NOTE ──────────────────────────────────────
+def auto_save_current_note():
+    """Automatically save the currently open note's content."""
+    if active_note_id[0] is None:
+        return
+    
+    title_entry = _write_refs.get("title_entry")
+    text_widget = _write_refs.get("text_widget")
+    
+    if title_entry and text_widget:
+        current_title = title_entry.get().strip()
+        current_content = text_widget.get("1.0", tk.END).strip()
+        
+        # Only save if there's actual content or title
+        if current_title or current_content:
+            note_data = notes_data.get(active_note_id[0], {})
+            
+            # If this note has a filepath, update the file directly
+            if "filepath" in note_data and os.path.exists(note_data["filepath"]):
+                # Update the existing file
+                content = f"""Title: {current_title or f"Note {active_note_id[0]}"}
+Date: {datetime.now().strftime('%Y-%m-%d %H:%M')}
+Note ID: {active_note_id[0]}
+{'=' * 50}
+
+{current_content}
+"""
+                try:
+                    with open(note_data["filepath"], "w", encoding="utf-8") as f:
+                        f.write(content)
+                    notes_data[active_note_id[0]] = {
+                        "title": current_title or f"Note {active_note_id[0]}",
+                        "date": datetime.now().strftime("%Y-%m-%d %H:%M"),
+                        "content": current_content,
+                        "filepath": note_data["filepath"]
+                    }
+                except Exception as e:
+                    print(f"Error updating file: {e}")
+            else:
+                # Update in-memory notes
+                notes_data[active_note_id[0]] = {
+                    "title": current_title or f"Note {active_note_id[0]}",
+                    "date": datetime.now().strftime("%Y-%m-%d %H:%M"),
+                    "content": current_content,
+                }
+            save_notes()
+            return True
+    return False
+
+
+# ─── SAVED NOTES FOLDER FUNCTIONS ────────────────────────────────
+def get_saved_notes_list():
+    """Get list of saved note files in the folder."""
+    return glob.glob(os.path.join(SAVED_NOTES_DIR, "*.txt"))
+
+def save_note_to_folder():
+    """Save the current note as a .txt file in the 'Saved Notes' folder."""
+    if active_note_id[0] is None:
+        messagebox.showwarning("No Note", "Please select or create a note first!")
+        return
+    
+    # Auto-save current content first
+    auto_save_current_note()
+    
+    note_id = active_note_id[0]
+    note_data = notes_data.get(note_id, {})
+    
+    if not note_data or (not note_data.get("title") and not note_data.get("content")):
+        messagebox.showwarning("Empty Note", "This note has no content to save!")
+        return
+    
+    # Get the title
+    title = note_data.get("title", "").strip()
+    if not title:
+        title = f"Note_{note_id}"
+    
+    # Create a safe filename
+    safe_title = "".join(c for c in title if c.isalnum() or c in " ._-").strip()
+    if not safe_title:
+        safe_title = f"Note_{note_id}"
+    
+    # Add timestamp to filename
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = f"{safe_title}_{timestamp}.txt"
+    filepath = os.path.join(SAVED_NOTES_DIR, filename)
+    
+    # Prepare the content
+    content = f"""Title: {title}
+Date: {note_data.get('date', datetime.now().strftime('%Y-%m-%d %H:%M'))}
+Note ID: {note_id}
+{'=' * 50}
+
+{note_data.get('content', '')}
+"""
+    
+    try:
+        with open(filepath, "w", encoding="utf-8") as f:
+            f.write(content)
+        
+        # Update the note with filepath
+        notes_data[note_id] = {
+            "title": note_data.get("title", title),
+            "date": note_data.get("date", datetime.now().strftime("%Y-%m-%d %H:%M")),
+            "content": note_data.get("content", ""),
+            "filepath": filepath
+        }
+        save_notes()
+        refresh_sidebar()
+        
+        result = messagebox.showinfo(
+            "Note Saved!",
+            f"✓ Note saved successfully!\n\n"
+            f"📁 Location: {SAVED_NOTES_DIR}/\n"
+            f"📄 Filename: {filename}\n\n"
+            f"Would you like to open the folder?",
+            type=messagebox.YESNO
+        )
+        
+        if result == "yes":
+            if sys.platform == "win32":
+                os.startfile(SAVED_NOTES_DIR)
+            elif sys.platform == "darwin":
+                subprocess.run(["open", SAVED_NOTES_DIR])
+            else:
+                subprocess.run(["xdg-open", SAVED_NOTES_DIR])
+                
+    except Exception as e:
+        messagebox.showerror("Save Error", f"Failed to save note:\n{str(e)}")
+
+def delete_saved_note_file(filepath):
+    """Delete a saved note file."""
+    try:
+        if os.path.exists(filepath):
+            os.remove(filepath)
+            return True
+    except Exception as e:
+        print(f"Error deleting file: {e}")
+    return False
+
+def delete_selected_saved_note():
+    """Delete a saved note file from the folder."""
+    saved_files = get_saved_notes_list()
+    
+    if not saved_files:
+        messagebox.showinfo("No Saved Notes", "There are no saved notes to delete.")
+        return
+    
+    # Create a list of filenames for selection
+    file_names = [os.path.basename(f) for f in saved_files]
+    
+    # Create a new window for selection
+    delete_window = tk.Toplevel(root)
+    delete_window.title("Delete Saved Note")
+    delete_window.geometry("500x400")
+    delete_window.configure(bg=DARK)
+    
+    delete_window.transient(root)
+    delete_window.grab_set()
+    
+    tk.Label(delete_window, text="Select a saved note to delete:", 
+             font=("Schoolbell", 14), bg=DARK, fg=ACCENT).pack(pady=10)
+    
+    frame = tk.Frame(delete_window, bg=DARK)
+    frame.pack(fill="both", expand=True, padx=20, pady=10)
+    
+    scrollbar = tk.Scrollbar(frame)
+    scrollbar.pack(side="right", fill="y")
+    
+    listbox = tk.Listbox(frame, font=HAND_FONT, bg=DARK_LIGHT, fg=ACCENT,
+                         selectbackground=ACTIVE_TAB, selectforeground="white",
+                         yscrollcommand=scrollbar.set)
+    listbox.pack(side="left", fill="both", expand=True)
+    scrollbar.config(command=listbox.yview)
+    
+    for name in file_names:
+        listbox.insert(tk.END, name)
+    
+    def confirm_delete():
+        selection = listbox.curselection()
+        if not selection:
+            messagebox.showwarning("No Selection", "Please select a file to delete.")
+            return
+        
+        selected_file = saved_files[selection[0]]
+        filename = os.path.basename(selected_file)
+        
+        confirm = messagebox.askyesno(
+            "Confirm Delete",
+            f"Are you sure you want to permanently delete:\n\n'{filename}'?\n\nThis action cannot be undone!",
+            parent=delete_window
+        )
+        
+        if confirm:
+            if delete_saved_note_file(selected_file):
+                # Also remove from notes_data if it exists there
+                for nid, note in list(notes_data.items()):
+                    if note.get("filepath") == selected_file:
+                        del notes_data[nid]
+                        if active_note_id[0] == nid:
+                            active_note_id[0] = None
+                        break
+                save_notes()
+                refresh_sidebar()
+                messagebox.showinfo("Deleted", f"✓ '{filename}' has been deleted.")
+                delete_window.destroy()
+                
+                # Rebuild the current note area if active note was deleted
+                note_area = _write_refs.get("note_area")
+                if note_area:
+                    build_note_panel(note_area)
+            else:
+                messagebox.showerror("Error", "Failed to delete file.")
+    
+    btn_frame = tk.Frame(delete_window, bg=DARK)
+    btn_frame.pack(pady=10)
+    
+    delete_btn = tk.Button(btn_frame, text="Delete Selected", font=HAND_FONT_SM,
+                           bg=BTN_DELETE_BG, fg="white", relief="flat",
+                           cursor="hand2", padx=20, pady=5, command=confirm_delete)
+    delete_btn.pack(side="left", padx=5)
+    
+    cancel_btn = tk.Button(btn_frame, text="Cancel", font=HAND_FONT_SM,
+                           bg=ACTIVE_TAB, fg="white", relief="flat",
+                           cursor="hand2", padx=20, pady=5, command=delete_window.destroy)
+    cancel_btn.pack(side="left", padx=5)
 
 
 # ─── COLOUR PALETTE ──────────────────────────────────────────────
@@ -190,13 +489,17 @@ BTN_SAVE_BG     = "#1e4a2f"
 BTN_SAVE_HOV    = "#2a6b40"
 BTN_BIN_BG      = "#3a3020"
 BTN_BIN_HOV     = "#5a4a30"
+BTN_PRIMARY_BG  = "#2a4a6b"
+BTN_PRIMARY_HOV = "#3a6a8b"
 
 HAND_FONT    = ("Schoolbell", 14)
 HAND_FONT_SM = ("Schoolbell", 12)
 HAND_FONT_LG = ("Schoolbell", 18)
 
-SIDEBAR_W = 160
+SIDEBAR_W = 180
 TOPBAR_H  = 50
+GAP       = 20
+PAD       = 30
 
 _write_refs = {}
 
@@ -225,50 +528,75 @@ def _draw_star_bg():
 def go_to_write_interface():
     play_click()
     my_canvas.delete("all")
-    my_canvas.configure(bg="black")
-    _draw_star_bg()
+    
+    try:
+        bg_img_raw = Image.open("bgi/1365264.png")
+        bg_img_res = bg_img_raw.resize((screen_width, screen_height), Image.Resampling.LANCZOS)
+        bg_photo = ImageTk.PhotoImage(bg_img_res)
+        my_canvas.create_image(0, 0, image=bg_photo, anchor="nw")
+        my_canvas.write_bg = bg_photo
+    except Exception as e:
+        print(f"Error loading background: {e}")
+        my_canvas.configure(bg="black")
+        _draw_star_bg()
 
-    pad = 30
-    bx1, by1 = pad, pad
-    bx2, by2 = screen_width - pad, screen_height - pad
+    tx1, ty1 = PAD, PAD
+    tx2, ty2 = screen_width - PAD, PAD + TOPBAR_H
+    sx1, sy1 = PAD, ty2 + GAP
+    sx2, sy2 = PAD + SIDEBAR_W, screen_height - PAD
+    ex1, ey1 = sx2 + GAP, ty2 + GAP
+    ex2, ey2 = screen_width - PAD, screen_height - PAD
 
-    my_canvas.create_rectangle(bx1, by1, bx2, by2,
-                                fill=DARK, outline=BORDER_CLR, width=2)
+    my_canvas.create_rectangle(tx1, ty1, tx2, ty2, fill=DARK, outline=BORDER_CLR, width=2)
+    my_canvas.create_rectangle(sx1, sy1, sx2, sy2, fill=DARK, outline=BORDER_CLR, width=2)
+    my_canvas.create_rectangle(ex1, ey1, ex2, ey2, fill=DARK, outline=BORDER_CLR, width=2)
 
-    # ── top bar ───────────────────────────────────────────────────
-    ty2 = by1 + TOPBAR_H
-    my_canvas.create_rectangle(bx1, by1, bx2, ty2,
-                                fill=DARK, outline=BORDER_CLR, width=2)
-
-    # ── Create (far left) ─────────────────────────────────────────
-    create_btn = tk.Button(my_canvas, text="Create", font=HAND_FONT_LG,
-                           bg=DARK, fg=ACCENT, relief="flat", cursor="hand2",
-                           activebackground=ACTIVE_TAB, activeforeground="white",
+    # Top Bar Widgets
+    create_btn = tk.Button(my_canvas, text="➕ Create", font=HAND_FONT_LG,
+                           bg=BTN_PRIMARY_BG, fg=ACCENT, relief="flat", cursor="hand2",
+                           activebackground=BTN_PRIMARY_HOV, activeforeground="white",
                            command=create_new_note)
-    create_btn.bind("<Enter>", lambda e: on_hover_dark(create_btn, ACTIVE_TAB))
-    create_btn.bind("<Leave>", lambda e: on_leave_dark(create_btn, DARK))
-    my_canvas.create_window(bx1 + 65, by1 + TOPBAR_H // 2, window=create_btn)
+    create_btn.bind("<Enter>", lambda e: on_hover_dark(create_btn, BTN_PRIMARY_HOV))
+    create_btn.bind("<Leave>", lambda e: on_leave_dark(create_btn, BTN_PRIMARY_BG))
+    my_canvas.create_window(tx1 + 65, ty1 + TOPBAR_H // 2, window=create_btn)
+    
+    save_folder_btn = tk.Button(my_canvas, text="📁 Save", font=HAND_FONT_LG,
+                                bg=BTN_PRIMARY_BG, fg=ACCENT, relief="flat", cursor="hand2",
+                                activebackground=BTN_PRIMARY_HOV, activeforeground="white",
+                                command=save_note_to_folder)
+    save_folder_btn.bind("<Enter>", lambda e: on_hover_dark(save_folder_btn, BTN_PRIMARY_HOV))
+    save_folder_btn.bind("<Leave>", lambda e: on_leave_dark(save_folder_btn, BTN_PRIMARY_BG))
+    my_canvas.create_window(tx1 + 210, ty1 + TOPBAR_H // 2, window=save_folder_btn)
+    
+    delete_folder_btn = tk.Button(my_canvas, text="🗑️Delete", font=HAND_FONT_LG,
+                                  bg=BTN_PRIMARY_BG, fg=ACCENT, relief="flat", cursor="hand2",
+                                  activebackground=BTN_PRIMARY_HOV, activeforeground="white",
+                                  command=delete_selected_saved_note)
+    delete_folder_btn.bind("<Enter>", lambda e: on_hover_dark(delete_folder_btn, BTN_PRIMARY_HOV))
+    delete_folder_btn.bind("<Leave>", lambda e: on_leave_dark(delete_folder_btn, BTN_PRIMARY_BG))
+    my_canvas.create_window(tx1 + 340, ty1 + TOPBAR_H // 2, window=delete_folder_btn)
 
-    # ── Random quote (centre) ─────────────────────────────────────
-    my_canvas.create_text((bx1 + bx2) // 2, by1 + TOPBAR_H // 2,
-                           text=random.choice(QUOTES),
-                           font=("Schoolbell", 17), fill=ACCENT)
+    # Random quote with rotation
+    global quote_text_id
+    quote_text_id = my_canvas.create_text((tx1 + tx2) // 2, ty1 + TOPBAR_H // 2,
+                                          text=random.choice(QUOTES), 
+                                          font=("Schoolbell", 17), fill=ACCENT)
+    # Start quote rotation
+    root.after(10000, rotate_quote)
 
-    # ── Bin button (right of centre, before bgm) ──────────────────
-    bin_top_btn = tk.Button(my_canvas, text="🗑 Bin", font=HAND_FONT_LG,
-                            bg=DARK, fg=ACCENT, relief="flat", cursor="hand2",
-                            activebackground=ACTIVE_TAB, activeforeground="white",
+    bin_top_btn = tk.Button(my_canvas, text="🗑️Bin", font=HAND_FONT_LG,
+                            bg=BTN_PRIMARY_BG, fg=ACCENT, relief="flat", cursor="hand2",
+                            activebackground=BTN_PRIMARY_HOV, activeforeground="white",
                             command=go_to_bin_interface)
-    bin_top_btn.bind("<Enter>", lambda e: on_hover_dark(bin_top_btn, ACTIVE_TAB))
-    bin_top_btn.bind("<Leave>", lambda e: on_leave_dark(bin_top_btn, DARK))
-    my_canvas.create_window(bx2 - 130, by1 + TOPBAR_H // 2, window=bin_top_btn)
+    bin_top_btn.bind("<Enter>", lambda e: on_hover_dark(bin_top_btn, BTN_PRIMARY_HOV))
+    bin_top_btn.bind("<Leave>", lambda e: on_leave_dark(bin_top_btn, BTN_PRIMARY_BG))
+    my_canvas.create_window(tx2 - 190, ty1 + TOPBAR_H // 2, window=bin_top_btn)
 
-    # ── BGM button (far right) — records screen pos for popup ─────
-    bgm_btn = tk.Button(my_canvas, text="bgm", font=HAND_FONT_LG,
-                        bg=DARK, fg=ACCENT, relief="flat", cursor="hand2",
-                        activebackground=ACTIVE_TAB, activeforeground="white")
-    bgm_btn.bind("<Enter>", lambda e: on_hover_dark(bgm_btn, ACTIVE_TAB))
-    bgm_btn.bind("<Leave>", lambda e: on_leave_dark(bgm_btn, DARK))
+    bgm_btn = tk.Button(my_canvas, text="🎵 BGM", font=HAND_FONT_LG,
+                        bg=BTN_PRIMARY_BG, fg=ACCENT, relief="flat", cursor="hand2",
+                        activebackground=BTN_PRIMARY_HOV, activeforeground="white")
+    bgm_btn.bind("<Enter>", lambda e: on_hover_dark(bgm_btn, BTN_PRIMARY_HOV))
+    bgm_btn.bind("<Leave>", lambda e: on_leave_dark(bgm_btn, BTN_PRIMARY_BG))
 
     def _open_bgm_from_write():
         bgm_btn.update_idletasks()
@@ -278,57 +606,53 @@ def go_to_write_interface():
         show_music_window()
 
     bgm_btn.config(command=_open_bgm_from_write)
-    my_canvas.create_window(bx2 - 45, by1 + TOPBAR_H // 2, window=bgm_btn)
+    my_canvas.create_window(tx2 - 75, ty1 + TOPBAR_H // 2, window=bgm_btn)
     _write_refs["bgm_btn"] = bgm_btn
 
-    # ── sidebar ───────────────────────────────────────────────────
-    sx2 = bx1 + SIDEBAR_W
-    my_canvas.create_rectangle(bx1, ty2, sx2, by2,
-                                fill=DARK, outline=BORDER_CLR, width=2)
-    sb_h = by2 - ty2 - 4
-
-    sb_scroll = tk.Scrollbar(my_canvas, orient="vertical",
-                              bg=DARK, troughcolor=DARK_LIGHT, width=12)
+    # Sidebar Content
     sb_canvas = tk.Canvas(my_canvas, bg=DARK, highlightthickness=0)
+    sb_scroll = tk.Scrollbar(my_canvas, orient="vertical", bg=DARK, troughcolor=DARK_LIGHT, width=12,
+                             command=sb_canvas.yview)
     sb_canvas.configure(yscrollcommand=sb_scroll.set)
-    sb_scroll.configure(command=sb_canvas.yview)
-
-    my_canvas.create_window(sx2 - 14, ty2 + 2,
-                             window=sb_scroll, anchor="nw", width=14, height=sb_h)
-    my_canvas.create_window(bx1 + 2,  ty2 + 2,
-                             window=sb_canvas, anchor="nw",
-                             width=SIDEBAR_W - 18, height=sb_h)
+    
+    my_canvas.create_window(sx1 + 2, sy1 + 2, window=sb_canvas, anchor="nw", 
+                            width=SIDEBAR_W - 18, height=(sy2 - sy1) - 4)
+    my_canvas.create_window(sx2 - 14, sy1 + 2, window=sb_scroll, anchor="nw", 
+                            width=12, height=(sy2 - sy1) - 4)
 
     inner_frame = tk.Frame(sb_canvas, bg=DARK)
-    inner_win   = sb_canvas.create_window(0, 0, window=inner_frame, anchor="nw")
+    sb_canvas.create_window(0, 0, window=inner_frame, anchor="nw")
+    
+    def _configure_scroll(e):
+        sb_canvas.configure(scrollregion=sb_canvas.bbox("all"))
+    
+    inner_frame.bind("<Configure>", _configure_scroll)
+    sb_canvas.bind("<Configure>", lambda e: sb_canvas.itemconfig(inner_win, width=e.width))
+    
+    inner_win = sb_canvas.create_window(0, 0, window=inner_frame, anchor="nw")
 
-    inner_frame.bind("<Configure>",
-                     lambda e: sb_canvas.configure(scrollregion=sb_canvas.bbox("all")))
-    sb_canvas.bind("<Configure>",
-                   lambda e: sb_canvas.itemconfig(inner_win, width=e.width))
-
-    def _mw(e): sb_canvas.yview_scroll(int(-1 * (e.delta / 120)), "units")
+    def _mw(e): 
+        sb_canvas.yview_scroll(int(-1 * (e.delta / 120)), "units")
     sb_canvas.bind("<MouseWheel>", _mw)
     inner_frame.bind("<MouseWheel>", _mw)
 
-    _write_refs["sb_canvas"]   = sb_canvas
+    _write_refs["sb_canvas"] = sb_canvas
     _write_refs["inner_frame"] = inner_frame
 
-    # ── note editor ───────────────────────────────────────────────
+    # Editor Content
     note_area = tk.Frame(my_canvas, bg=DARK, highlightthickness=0)
-    my_canvas.create_window(sx2 + 2, ty2 + 2, window=note_area, anchor="nw",
-                             width=bx2 - sx2 - 4, height=by2 - ty2 - 4)
+    my_canvas.create_window(ex1 + 5, ey1 + 5, window=note_area, anchor="nw",
+                            width=(ex2 - ex1) - 10, height=(ey2 - ey1) - 10)
     _write_refs["note_area"] = note_area
+
+    # Back Button
+    back_btn = tk.Button(my_canvas, text="← Back", font=HAND_FONT_SM,
+                         bg="black", fg="#888", relief="flat", cursor="hand2",
+                         command=lambda: [auto_save_current_note(), go_to_main_interface()])
+    my_canvas.create_window(PAD + 40, screen_height - 15, window=back_btn)
 
     build_note_panel(note_area)
     refresh_sidebar()
-
-    # Back button
-    back_btn = tk.Button(my_canvas, text="← Back", font=HAND_FONT_SM,
-                         bg="black", fg="#888", relief="flat", cursor="hand2",
-                         activebackground="black", activeforeground=ACCENT,
-                         command=go_to_main_interface)
-    my_canvas.create_window(pad + 40, screen_height - 14, window=back_btn)
 
 
 # ─── NOTE PANEL ──────────────────────────────────────────────────
@@ -340,7 +664,6 @@ def build_note_panel(parent):
     data    = notes_data.get(note_id, {})
     on      = note_id is not None
 
-    # heading
     hf = tk.Frame(parent, bg=DARK)
     hf.pack(fill="x", padx=14, pady=(10, 2))
     tk.Label(hf, text=f"Note {note_id}" if on else "No note selected",
@@ -348,7 +671,6 @@ def build_note_panel(parent):
              anchor="w").pack(side="left")
     tk.Frame(parent, bg=BORDER_CLR, height=1).pack(fill="x", padx=8)
 
-    # title + date
     td = tk.Frame(parent, bg=DARK)
     td.pack(fill="x", padx=14, pady=(8, 0))
     title_entry = tk.Entry(td, font=HAND_FONT, bg=DARK_LIGHT, fg=ACCENT,
@@ -357,7 +679,14 @@ def build_note_panel(parent):
                            highlightbackground=BORDER_CLR,
                            disabledbackground=DARK, disabledforeground="#555",
                            state="normal" if on else "disabled")
+    
+    def on_title_change(event=None):
+        if on:
+            auto_save_current_note()
+    
     title_entry.insert(0, data.get("title", ""))
+    title_entry.bind("<FocusOut>", on_title_change)
+    title_entry.bind("<KeyRelease>", on_title_change)
     title_entry.pack(side="left", expand=True, fill="x", ipady=5)
     _write_refs["title_entry"] = title_entry
 
@@ -366,7 +695,6 @@ def build_note_panel(parent):
              ).pack(side="right", padx=(10, 0))
     tk.Frame(parent, bg=LINE_CLR, height=1).pack(fill="x", padx=14, pady=(8, 0))
 
-    # text area
     tc = tk.Frame(parent, bg=DARK)
     tc.pack(fill="both", expand=True, padx=14, pady=8)
     text_widget = tk.Text(tc, font=("Schoolbell", 15),
@@ -375,6 +703,14 @@ def build_note_panel(parent):
                           highlightthickness=0, borderwidth=0,
                           selectbackground=ACTIVE_TAB, selectforeground="white",
                           state="normal" if on else "disabled")
+    
+    def on_text_change(event=None):
+        if on:
+            auto_save_current_note()
+    
+    text_widget.bind("<KeyRelease>", on_text_change)
+    text_widget.bind("<FocusOut>", on_text_change)
+    
     text_widget.pack(side="left", fill="both", expand=True)
     if on and data.get("content"):
         text_widget.insert("1.0", data["content"])
@@ -384,21 +720,33 @@ def build_note_panel(parent):
     txt_sb.pack(side="right", fill="y")
     text_widget.config(yscrollcommand=txt_sb.set)
 
-    # ── button bar: Save | Delete ────────────────────────────────
     btn_bar = tk.Frame(parent, bg=DARK)
     btn_bar.pack(fill="x", padx=14, pady=(0, 14))
 
     def _soft_delete():
-        """Move current note to trash and refresh."""
+        """Move current note to trash and delete the file if it exists."""
         if active_note_id[0] is None:
             return
-        confirm = messagebox.askyesno("Delete Note",
-                                      "Move this note to the bin?")
+        
+        auto_save_current_note()
+        
+        confirm = messagebox.askyesno("Delete Note", 
+                                      "Delete this note?\n\nThis will also delete the saved file if it exists!")
         if not confirm:
             return
-        nid  = active_note_id[0]
+        
+        nid = active_note_id[0]
         note = notes_data.pop(nid, {})
-        # Store in trash with deletion timestamp
+        
+        # Delete the file if it exists
+        if "filepath" in note and os.path.exists(note["filepath"]):
+            try:
+                os.remove(note["filepath"])
+                print(f"Deleted file: {note['filepath']}")
+            except Exception as e:
+                print(f"Error deleting file: {e}")
+        
+        # Move to trash (for reference, but file is already deleted)
         trash_counter[0] += 1
         tid = trash_counter[0]
         trash_data[tid] = {
@@ -416,20 +764,14 @@ def build_note_panel(parent):
     def _save_note():
         if active_note_id[0] is None:
             return
-        notes_data[active_note_id[0]] = {
-            "title":   title_entry.get().strip() or f"Note {active_note_id[0]}",
-            "date":    datetime.now().strftime("%Y-%m-%d %H:%M"),
-            "content": text_widget.get("1.0", tk.END).strip(),
-        }
-        save_notes()
+        auto_save_current_note()
         refresh_sidebar()
         flash = tk.Label(parent, text="✓ Saved!", font=HAND_FONT_SM,
                          bg="#1e3a2f", fg="#6fcf97", padx=10, pady=4)
         flash.place(relx=0.5, rely=0.97, anchor="s")
         parent.after(1500, flash.destroy)
 
-    # Save (green)
-    save_btn = tk.Button(btn_bar, text="Save",
+    save_btn = tk.Button(btn_bar, text="💾 Save",
                          font=("Schoolbell", 15, "bold"),
                          bg=BTN_SAVE_BG, fg="white",
                          activebackground=BTN_SAVE_HOV, activeforeground="white",
@@ -439,8 +781,8 @@ def build_note_panel(parent):
     save_btn.bind("<Leave>", lambda e: on_leave_dark(save_btn, BTN_SAVE_BG) if on else None)
     save_btn.pack(side="left", expand=True, fill="x", padx=(0, 6))
 
-    # Delete (red) — moves note to bin
-    del_btn = tk.Button(btn_bar, text="Delete",
+    # Delete button - now deletes file and removes from sidebar
+    del_btn = tk.Button(btn_bar, text="🗑 Delete",
                         font=("Schoolbell", 15, "bold"),
                         bg=BTN_DELETE_BG, fg="white",
                         activebackground=BTN_DELETE_HOV, activeforeground="white",
@@ -465,6 +807,10 @@ def refresh_sidebar():
         is_active  = (nid == active_note_id[0])
         bg_c       = ACTIVE_TAB if is_active else DARK
         label_text = notes_data[nid].get("title", "").strip() or f"Note {nid}"
+        
+        # Add a bookmark icon for saved files
+        if "filepath" in notes_data[nid]:
+            label_text = f"📄 {label_text}"
 
         btn = tk.Button(inner_frame, text=label_text, font=HAND_FONT,
                         bg=bg_c, fg=ACCENT,
@@ -482,6 +828,7 @@ def refresh_sidebar():
 
 
 def select_note(nid):
+    auto_save_current_note()
     active_note_id[0] = nid
     note_area = _write_refs.get("note_area")
     if note_area:
@@ -490,6 +837,7 @@ def select_note(nid):
 
 
 def create_new_note():
+    auto_save_current_note()
     note_counter[0] += 1
     nid = note_counter[0]
     notes_data[nid] = {
@@ -511,38 +859,48 @@ def create_new_note():
 #  BIN / TRASH INTERFACE
 # ═══════════════════════════════════════════════════════════════════
 def go_to_bin_interface():
+    auto_save_current_note()
     play_click()
     my_canvas.delete("all")
-    my_canvas.configure(bg="black")
-    _draw_star_bg()
+    
+    try:
+        bin_bg_img_raw = Image.open("bgi/1398816.png")
+        bin_bg_img_res = bin_bg_img_raw.resize((screen_width, screen_height), Image.Resampling.LANCZOS)
+        bin_bg_photo = ImageTk.PhotoImage(bin_bg_img_res)
+        my_canvas.create_image(0, 0, image=bin_bg_photo, anchor="nw")
+        my_canvas.bin_bg = bin_bg_photo
+    except Exception as e:
+        print(f"Error loading bin background: {e}")
+        my_canvas.configure(bg="black")
+        _draw_star_bg()
 
     pad = 30
     bx1, by1 = pad, pad
     bx2, by2 = screen_width - pad, screen_height - pad
 
-    # outer box
+    SEMI_DARK = "#4a4b4b"
+    SEMI_LIGHT = "#5a5b5b"
+    
     my_canvas.create_rectangle(bx1, by1, bx2, by2,
-                                fill=DARK, outline=BORDER_CLR, width=2)
+                                fill=SEMI_DARK, outline=BORDER_CLR, width=2, stipple="gray50")
 
-    # ── header row ───────────────────────────────────────────────
     hdr_y2 = by1 + TOPBAR_H
     my_canvas.create_rectangle(bx1, by1, bx2, hdr_y2,
-                                fill=DARK, outline=BORDER_CLR, width=2)
+                                fill=SEMI_LIGHT, outline=BORDER_CLR, width=2, stipple="gray25")
+    
     my_canvas.create_text(bx1 + 20, by1 + TOPBAR_H // 2,
-                           text="Recently deleted:",
+                           text="🗑 Recently deleted:",
                            font=("Schoolbell", 18, "bold"),
                            fill=ACCENT, anchor="w")
 
-    # ── scrollable list area ──────────────────────────────────────
-    # Reserve space at the bottom for the Back button bar
-    footer_h = 60
+    footer_h = 70
     list_y1  = hdr_y2
     list_y2  = by2 - footer_h
-    list_h   = list_y2 - list_y1 - 4
+    list_h   = list_y2 - list_y1 - 10
 
     list_scroll = tk.Scrollbar(my_canvas, orient="vertical",
-                                bg=DARK, troughcolor=DARK_LIGHT, width=12)
-    list_canvas = tk.Canvas(my_canvas, bg=DARK, highlightthickness=0)
+                                bg=SEMI_DARK, troughcolor=SEMI_LIGHT, width=12)
+    list_canvas = tk.Canvas(my_canvas, bg=SEMI_DARK, highlightthickness=0)
     list_canvas.configure(yscrollcommand=list_scroll.set)
     list_scroll.configure(command=list_canvas.yview)
 
@@ -552,7 +910,7 @@ def go_to_bin_interface():
                              window=list_canvas, anchor="nw",
                              width=bx2 - bx1 - 18, height=list_h)
 
-    rows_frame = tk.Frame(list_canvas, bg=DARK)
+    rows_frame = tk.Frame(list_canvas, bg=SEMI_DARK)
     rows_win   = list_canvas.create_window(0, 0, window=rows_frame, anchor="nw")
 
     rows_frame.bind("<Configure>",
@@ -569,27 +927,23 @@ def go_to_bin_interface():
             w.destroy()
 
         if not trash_data:
-            tk.Label(rows_frame, text="The bin is empty.",
-                     font=HAND_FONT, bg=DARK, fg="#666").pack(pady=20)
+            tk.Label(rows_frame, text="✨ The bin is empty. ✨",
+                     font=("Schoolbell", 16), bg=SEMI_DARK, fg="#888").pack(pady=40)
             return
 
-        for tid in sorted(trash_data.keys()):
+        for tid in sorted(trash_data.keys(), reverse=True):
             item  = trash_data[tid]
             title = item.get("title", f"Note {tid}")
             date  = item.get("deleted_date", "?")
 
-            row = tk.Frame(rows_frame, bg=DARK)
-            row.pack(fill="x", padx=10, pady=3)
+            row = tk.Frame(rows_frame, bg=SEMI_DARK)
+            row.pack(fill="x", padx=10, pady=5)
 
-            # Note title (left, expands)
-            tk.Label(row, text=title, font=HAND_FONT, bg=DARK, fg=ACCENT,
-                     anchor="w", width=20).pack(side="left", padx=(0, 10))
+            tk.Label(row, text=title, font=HAND_FONT, bg=SEMI_DARK, fg=ACCENT,
+                     anchor="w", width=25).pack(side="left", padx=(10, 10))
+            tk.Label(row, text=f"🗑 {date}", font=HAND_FONT_SM, bg=SEMI_DARK,
+                     fg="#aaa", anchor="w", width=15).pack(side="left", padx=(0, 10))
 
-            # Date
-            tk.Label(row, text=date, font=HAND_FONT_SM, bg=DARK,
-                     fg="#888", anchor="w", width=14).pack(side="left", padx=(0, 10))
-
-            # Restore button
             def _restore(t=tid):
                 item = trash_data.pop(t, {})
                 note_counter[0] += 1
@@ -603,49 +957,48 @@ def go_to_bin_interface():
                 save_trash()
                 _rebuild_rows()
 
-            restore_btn = tk.Button(row, text="restore", font=HAND_FONT_SM,
+            restore_btn = tk.Button(row, text="↩️ Restore", font=HAND_FONT_SM,
                                     bg=BTN_SAVE_BG, fg="white",
                                     activebackground=BTN_SAVE_HOV,
-                                    relief="flat", cursor="hand2", padx=8, pady=3,
+                                    relief="flat", cursor="hand2", padx=12, pady=5,
                                     command=_restore)
-            restore_btn.pack(side="left", padx=(0, 6))
+            restore_btn.pack(side="left", padx=(0, 8))
 
-            # Permanent delete button
-            def _perm_delete(t=tid):
+            def _perm_delete(t=tid, title=title):
                 confirm = messagebox.askyesno(
-                    "Permanent Delete",
-                    "Permanently delete this note? This cannot be undone.")
+                    "⚠️ Permanent Delete",
+                    f"Permanently delete '{title}'?\n\nThis action cannot be undone!")
                 if confirm:
                     trash_data.pop(t, None)
                     save_trash()
                     _rebuild_rows()
 
-            del_btn = tk.Button(row, text="Delete", font=HAND_FONT_SM,
+            del_btn = tk.Button(row, text="🗑️ Delete", font=HAND_FONT_SM,
                                 bg=BTN_DELETE_BG, fg="white",
                                 activebackground=BTN_DELETE_HOV,
-                                relief="flat", cursor="hand2", padx=8, pady=3,
+                                relief="flat", cursor="hand2", padx=12, pady=5,
                                 command=_perm_delete)
             del_btn.pack(side="left")
-
-            # divider
-            tk.Frame(rows_frame, bg=BORDER_CLR, height=1).pack(fill="x", padx=10)
+            tk.Frame(rows_frame, bg=BORDER_CLR, height=1).pack(fill="x", padx=10, pady=5)
 
     _rebuild_rows()
 
-    # ── footer: Back button ───────────────────────────────────────
     footer_y = list_y2
     my_canvas.create_rectangle(bx1, footer_y, bx2, by2,
-                                fill=DARK, outline=BORDER_CLR, width=2)
-
-    back_frame = tk.Frame(my_canvas, bg=DARK, padx=4, pady=4)
-    back_inner = tk.Button(back_frame, text="Back", font=("Schoolbell", 15, "bold"),
-                           bg=DARK_LIGHT, fg=ACCENT, relief="flat",
-                           cursor="hand2", padx=20, pady=6,
+                                fill=SEMI_LIGHT, outline=BORDER_CLR, width=2, stipple="gray25")
+    
+    back_frame = tk.Frame(my_canvas, bg=SEMI_LIGHT, padx=10, pady=10)
+    back_inner = tk.Button(back_frame, text="← Back to Notes", font=("Schoolbell", 16, "bold"),
+                           bg=ACTIVE_TAB, fg="white", relief="raised", 
+                           cursor="hand2", padx=30, pady=10,
+                           activebackground=ACCENT, activeforeground="black",
                            command=go_to_write_interface)
-    back_inner.bind("<Enter>", lambda e: on_hover_dark(back_inner, ACTIVE_TAB))
-    back_inner.bind("<Leave>", lambda e: on_leave_dark(back_inner, DARK_LIGHT))
+    back_inner.bind("<Enter>", lambda e: back_inner.config(bg=ACCENT, fg="black"))
+    back_inner.bind("<Leave>", lambda e: back_inner.config(bg=ACTIVE_TAB, fg="white"))
     back_inner.pack()
-    my_canvas.create_window(bx1 + 70, footer_y + footer_h // 2, window=back_frame)
+    
+    my_canvas.create_window((bx1 + bx2) // 2, footer_y + (footer_h // 2), 
+                            window=back_frame, anchor="center")
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -672,7 +1025,7 @@ def go_to_main_interface():
     exit_frame = tk.Frame(my_canvas, bg="white", padx=4, pady=4)
     eb = tk.Button(exit_frame, text="Exit", font=btn_font,
                    bg="black", fg="white", relief="flat", width=10, height=2,
-                   command=lambda: [play_click(), root.destroy()])
+                   command=lambda: [auto_save_current_note(), play_click(), root.destroy()])
     eb.bind("<Enter>", lambda e: [play_hover(), on_hover(eb)])
     eb.bind("<Leave>", lambda e: on_leave(eb))
     eb.pack()
@@ -749,7 +1102,7 @@ write_btn.pack()
 exit_frame = tk.Frame(my_canvas, bg="white", padx=4, pady=4)
 exit_btn   = tk.Button(exit_frame, text="Exit", font=btn_font,
                        bg="black", fg="white", relief="flat", width=10, height=2,
-                       command=lambda: [play_click(), root.destroy()])
+                       command=lambda: [auto_save_current_note(), play_click(), root.destroy()])
 exit_btn.bind("<Enter>", lambda e: [play_hover(), on_hover(exit_btn)])
 exit_btn.bind("<Leave>", lambda e: on_leave(exit_btn))
 exit_btn.pack()
