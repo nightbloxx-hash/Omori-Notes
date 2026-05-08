@@ -4,6 +4,7 @@ import random
 import os
 import json
 import glob
+import shutil  # ADDED for moving files
 from datetime import datetime
 
 QUOTES = [
@@ -51,9 +52,15 @@ from tkinter import messagebox
 
 # ─── CREATE SAVED NOTES FOLDER AND LOAD SAVED NOTES ──────────────
 SAVED_NOTES_DIR = "Saved Notes"
+TRASH_DIR = "Trash"
+
 if not os.path.exists(SAVED_NOTES_DIR):
     os.makedirs(SAVED_NOTES_DIR)
     print(f"Created '{SAVED_NOTES_DIR}' folder for saving notes.")
+
+if not os.path.exists(TRASH_DIR):
+    os.makedirs(TRASH_DIR)
+    print(f"Created '{TRASH_DIR}' folder for deleted notes.")
 
 def load_saved_notes_as_notes():
     """Load all saved .txt files from Saved Notes folder and convert to notes_data format."""
@@ -71,6 +78,7 @@ def load_saved_notes_as_notes():
             title = "Untitled"
             date = datetime.now().strftime("%Y-%m-%d %H:%M")
             note_content = content
+            note_id = 0
             
             # Try to extract title and date from the saved format
             for i, line in enumerate(lines):
@@ -78,22 +86,93 @@ def load_saved_notes_as_notes():
                     title = line[7:].strip()
                 elif line.startswith("Date: "):
                     date = line[6:].strip()
+                elif line.startswith("Note ID: "):
+                    try:
+                        note_id = int(line[9:].strip())
+                    except:
+                        note_id = 0
                 elif line.startswith("==="):
                     note_content = '\n'.join(lines[i+1:]).strip()
                     break
             
-            # Generate a unique ID
-            max_id += 1
-            loaded_notes[max_id] = {
-                "title": title,
-                "date": date,
-                "content": note_content,
-                "filepath": filepath  # Store the filepath for deletion
-            }
+            # Use the existing note_id if found, otherwise generate new one
+            if note_id > 0:
+                nid = note_id
+            else:
+                max_id += 1
+                nid = max_id
+            
+            # If note already exists, we'll merge later
+            if nid not in loaded_notes:
+                loaded_notes[nid] = {
+                    "title": title,
+                    "date": date,
+                    "content": note_content,
+                    "filepaths": [filepath]  # Store list of filepaths for all versions
+                }
+            else:
+                # Add this filepath to existing note's filepaths
+                if "filepaths" not in loaded_notes[nid]:
+                    loaded_notes[nid]["filepaths"] = []
+                loaded_notes[nid]["filepaths"].append(filepath)
+                # Update with latest content (most recent file)
+                loaded_notes[nid]["title"] = title
+                loaded_notes[nid]["date"] = date
+                loaded_notes[nid]["content"] = note_content
+                
         except Exception as e:
             print(f"Error loading saved note {filepath}: {e}")
     
+    # Update max_id based on highest note_id found
+    if loaded_notes:
+        max_id = max(max_id, max(loaded_notes.keys()))
+    
     return loaded_notes, max_id
+
+def load_trash_files():
+    """Load deleted files from Trash folder and convert to trash_data format."""
+    trash_files = glob.glob(os.path.join(TRASH_DIR, "*.txt"))
+    loaded_trash = {}
+    max_id = 0
+    
+    for filepath in trash_files:
+        try:
+            with open(filepath, "r", encoding="utf-8") as f:
+                content = f.read()
+            
+            # Parse the deleted note content
+            lines = content.split('\n')
+            title = "Untitled"
+            deleted_date = datetime.now().strftime("%Y-%m-%d %H:%M")
+            original_content = content
+            original_id = 0
+            
+            for i, line in enumerate(lines):
+                if line.startswith("Title: "):
+                    title = line[7:].strip()
+                elif line.startswith("Deleted Date: "):
+                    deleted_date = line[14:].strip()
+                elif line.startswith("Original ID: "):
+                    try:
+                        original_id = int(line[13:].strip())
+                    except:
+                        original_id = 0
+                elif line.startswith("==="):
+                    original_content = '\n'.join(lines[i+1:]).strip()
+                    break
+            
+            max_id += 1
+            loaded_trash[max_id] = {
+                "title": title,
+                "deleted_date": deleted_date,
+                "content": original_content,
+                "original_id": original_id,
+                "filepath": filepath
+            }
+        except Exception as e:
+            print(f"Error loading trash file {filepath}: {e}")
+    
+    return loaded_trash, max_id
 
 # ─── MUSIC INITIALIZATION ────────────────────────────────────────
 pygame.mixer.init()
@@ -177,7 +256,14 @@ def show_music_window(event=None):
     vol = tk.Scale(mc, from_=0, to=100, orient="horizontal", length=200,
                    bg="black", fg="white", highlightthickness=0, troughcolor="white",
                    command=lambda v: pygame.mixer.music.set_volume(float(v) / 100))
-    vol.set(100)
+    def _on_volume_change(v):
+        current_volume[0] = float(v) / 100
+        pygame.mixer.music.set_volume(current_volume[0])
+
+    vol = tk.Scale(mc, from_=0, to=100, orient="horizontal", length=200,
+                bg="black", fg="white", highlightthickness=0, troughcolor="white",
+                command=_on_volume_change)
+    vol.set(int(current_volume[0] * 100))
     mc.create_window(150, 280, window=vol)
 
     close_frame = tk.Frame(mc, bg="white", padx=2, pady=2)
@@ -188,6 +274,9 @@ def show_music_window(event=None):
     close_btn.bind("<Leave>", lambda e: on_leave(close_btn))
     close_btn.pack()
     mc.create_window(150, 330, window=close_frame)
+
+# ─── VOLUME TRACKER ──────────────────────────────────────────────
+current_volume = [1.0]
 
 
 # ─── QUOTE ROTATION FUNCTION ─────────────────────────────────────
@@ -200,7 +289,6 @@ def rotate_quote():
     new_quote = random.choice(QUOTES)
     if quote_text_id is not None:
         my_canvas.itemconfig(quote_text_id, text=new_quote)
-    # Schedule next quote change in 10 seconds
     root.after(10000, rotate_quote)
 
 
@@ -232,22 +320,35 @@ saved_notes, saved_max = load_saved_notes_as_notes()
 notes_data = {**json_notes, **saved_notes}
 max_note_id = max(json_max, saved_max) if json_max or saved_max else 0
 
-trash_data, _trash_max = load_json(TRASH_FILE)
+# Load trash from both JSON and Trash folder
+json_trash, json_trash_max = load_json(TRASH_FILE)
+folder_trash, folder_trash_max = load_trash_files()
+
+# Merge trash data
+trash_data = {**json_trash, **folder_trash}
+_trash_max = max(json_trash_max, folder_trash_max) if json_trash_max or folder_trash_max else 0
 
 note_counter  = [max_note_id]
 trash_counter = [_trash_max]
 active_note_id = [None]
 
 def save_notes(): 
-    # Only save non-file-linked notes to JSON (notes that exist only in app memory)
+    # Only save non-file-linked notes to JSON
     json_savable = {}
     for nid, note in notes_data.items():
-        if "filepath" not in note:  # Don't save file-linked notes to JSON again
-            json_savable[nid] = {k: v for k, v in note.items() if k != "filepath"}
+        if "filepaths" not in note:  # Don't save file-linked notes to JSON
+            # Remove any filepath data if present
+            clean_note = {k: v for k, v in note.items() if k != "filepaths"}
+            json_savable[nid] = clean_note
     write_json(NOTES_FILE, json_savable)
     
-def save_trash(): 
-    write_json(TRASH_FILE, trash_data)
+def save_trash():
+    # Only save non-file-linked trash items to JSON
+    json_savable = {}
+    for tid, item in trash_data.items():
+        if "filepath" not in item:
+            json_savable[tid] = item
+    write_json(TRASH_FILE, json_savable)
 
 # ─── AUTO-SAVE CURRENT NOTE ──────────────────────────────────────
 def auto_save_current_note():
@@ -266,27 +367,28 @@ def auto_save_current_note():
         if current_title or current_content:
             note_data = notes_data.get(active_note_id[0], {})
             
-            # If this note has a filepath, update the file directly
-            if "filepath" in note_data and os.path.exists(note_data["filepath"]):
-                # Update the existing file
-                content = f"""Title: {current_title or f"Note {active_note_id[0]}"}
+            # If this note has filepaths, update the latest file
+            if "filepaths" in note_data and note_data["filepaths"]:
+                latest_filepath = note_data["filepaths"][-1]  # Most recent file
+                if os.path.exists(latest_filepath):
+                    # Update the existing file
+                    content = f"""Title: {current_title or f"Note {active_note_id[0]}"}
 Date: {datetime.now().strftime('%Y-%m-%d %H:%M')}
 Note ID: {active_note_id[0]}
 {'=' * 50}
 
 {current_content}
 """
-                try:
-                    with open(note_data["filepath"], "w", encoding="utf-8") as f:
-                        f.write(content)
-                    notes_data[active_note_id[0]] = {
-                        "title": current_title or f"Note {active_note_id[0]}",
-                        "date": datetime.now().strftime("%Y-%m-%d %H:%M"),
-                        "content": current_content,
-                        "filepath": note_data["filepath"]
-                    }
-                except Exception as e:
-                    print(f"Error updating file: {e}")
+                    try:
+                        with open(latest_filepath, "w", encoding="utf-8") as f:
+                            f.write(content)
+                        notes_data[active_note_id[0]].update({
+                            "title": current_title or f"Note {active_note_id[0]}",
+                            "date": datetime.now().strftime("%Y-%m-%d %H:%M"),
+                            "content": current_content,
+                        })
+                    except Exception as e:
+                        print(f"Error updating file: {e}")
             else:
                 # Update in-memory notes
                 notes_data[active_note_id[0]] = {
@@ -348,21 +450,34 @@ Note ID: {note_id}
         with open(filepath, "w", encoding="utf-8") as f:
             f.write(content)
         
-        # Update the note with filepath
-        notes_data[note_id] = {
-            "title": note_data.get("title", title),
+        # Update the note with filepaths list
+        if note_id not in notes_data:
+            notes_data[note_id] = {}
+        
+        if "filepaths" not in notes_data[note_id]:
+            notes_data[note_id]["filepaths"] = []
+        
+        # Add the new filepath if not already in list
+        if filepath not in notes_data[note_id]["filepaths"]:
+            notes_data[note_id]["filepaths"].append(filepath)
+        
+        notes_data[note_id].update({
+            "title": title,
             "date": note_data.get("date", datetime.now().strftime("%Y-%m-%d %H:%M")),
             "content": note_data.get("content", ""),
-            "filepath": filepath
-        }
+        })
+        
         save_notes()
         refresh_sidebar()
         
+        # Show info message
+        version_count = len(notes_data[note_id]["filepaths"])
         result = messagebox.showinfo(
             "Note Saved!",
             f"✓ Note saved successfully!\n\n"
             f"📁 Location: {SAVED_NOTES_DIR}/\n"
-            f"📄 Filename: {filename}\n\n"
+            f"📄 Filename: {filename}\n"
+            f"📊 Version: {version_count} saved version(s) of this note\n\n"
             f"Would you like to open the folder?",
             type=messagebox.YESNO
         )
@@ -378,38 +493,228 @@ Note ID: {note_id}
     except Exception as e:
         messagebox.showerror("Save Error", f"Failed to save note:\n{str(e)}")
 
-def delete_saved_note_file(filepath):
-    """Delete a saved note file."""
-    try:
+def move_note_to_trash(note_id, note_data):
+    """Move ALL versions of a note file to the Trash folder."""
+    moved_count = 0
+    
+    # Get all filepaths associated with this note
+    filepaths = note_data.get("filepaths", [])
+    
+    # Also check if there's a single filepath (legacy format)
+    if not filepaths and "filepath" in note_data:
+        filepaths = [note_data["filepath"]]
+    
+    for filepath in filepaths:
         if os.path.exists(filepath):
-            os.remove(filepath)
+            try:
+                # Generate trash filename with timestamp
+                original_filename = os.path.basename(filepath)
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")  # Added microseconds to avoid collisions
+                trash_filename = f"DELETED_{timestamp}_{original_filename}"
+                trash_path = os.path.join(TRASH_DIR, trash_filename)
+                
+                # Read the original content to add deletion metadata
+                with open(filepath, "r", encoding="utf-8") as f:
+                    content = f.read()
+                
+                # Parse existing content to get original data
+                lines = content.split('\n')
+                original_title = note_data.get("title", "Untitled")
+                original_date = note_data.get("date", datetime.now().strftime("%Y-%m-%d %H:%M"))
+                original_content = note_data.get("content", "")
+                
+                # Create trash file with deletion metadata
+                trash_content = f"""Title: {original_title}
+Original Date: {original_date}
+Deleted Date: {datetime.now().strftime('%Y-%m-%d %H:%M')}
+Original ID: {note_id}
+Original File: {original_filename}
+{'=' * 50}
+
+{original_content}
+"""
+                
+                # Write to trash folder
+                with open(trash_path, "w", encoding="utf-8") as f:
+                    f.write(trash_content)
+                
+                # Delete the original file
+                os.remove(filepath)
+                moved_count += 1
+                
+                # Add to trash_data (only once per note, not per version)
+                if moved_count == 1:  # Only add one entry for the note
+                    trash_counter[0] += 1
+                    tid = trash_counter[0]
+                    trash_data[tid] = {
+                        "title": original_title,
+                        "deleted_date": datetime.now().strftime("%Y-%m-%d %H:%M"),
+                        "content": original_content,
+                        "original_id": note_id,
+                        "filepath": trash_path,
+                        "version_count": len(filepaths)  # Store how many versions were deleted
+                    }
+                    save_trash()
+                
+            except Exception as e:
+                print(f"Error moving {filepath} to trash: {e}")
+    
+    return moved_count > 0
+
+def delete_saved_note_file(filepath, note_id=None, note_data=None):
+    """Move a saved note file to trash instead of permanent deletion."""
+    if note_id and note_data and os.path.exists(filepath):
+        return move_note_to_trash(note_id, note_data)
+    return False
+
+def restore_from_trash(trash_id, trash_item):
+    """Restore a note from trash back to Saved Notes."""
+    try:
+        if "filepath" in trash_item and os.path.exists(trash_item["filepath"]):
+            # Read the trash file
+            with open(trash_item["filepath"], "r", encoding="utf-8") as f:
+                content = f.read()
+            
+            # Parse to get original data
+            lines = content.split('\n')
+            title = "Restored Note"
+            original_content = ""
+            original_filename = ""
+            
+            for i, line in enumerate(lines):
+                if line.startswith("Title: "):
+                    title = line[7:].strip()
+                elif line.startswith("Original File: "):
+                    original_filename = line[15:].strip()
+                elif line.startswith("==="):
+                    original_content = '\n'.join(lines[i+1:]).strip()
+                    break
+            
+            if not original_content:
+                original_content = trash_item.get("content", "")
+            
+            # Create restored filename (preserve original name if possible)
+            if original_filename:
+                # Remove the DELETED_ prefix and timestamp if present
+                if original_filename.startswith("DELETED_"):
+                    parts = original_filename.split('_', 2)
+                    if len(parts) > 2:
+                        original_filename = parts[2]
+                new_path = os.path.join(SAVED_NOTES_DIR, original_filename)
+                
+                # If file already exists, add timestamp
+                if os.path.exists(new_path):
+                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    name, ext = os.path.splitext(original_filename)
+                    new_path = os.path.join(SAVED_NOTES_DIR, f"{name}_restored_{timestamp}{ext}")
+            else:
+                # Create new filename
+                safe_title = "".join(c for c in title if c.isalnum() or c in " ._-").strip()
+                if not safe_title:
+                    safe_title = "Restored_Note"
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                filename = f"{safe_title}_restored_{timestamp}.txt"
+                new_path = os.path.join(SAVED_NOTES_DIR, filename)
+            
+            # Create restored file content
+            new_content = f"""Title: {title}
+Date: {datetime.now().strftime('%Y-%m-%d %H:%M')}
+Note ID: {trash_item.get('original_id', 'restored')}
+{'=' * 50}
+
+{original_content}
+"""
+            
+            # Write to Saved Notes
+            with open(new_path, "w", encoding="utf-8") as f:
+                f.write(new_content)
+            
+            # Delete the trash file
+            os.remove(trash_item["filepath"])
+            
+            # Add back to notes_data
+            original_id = trash_item.get("original_id")
+            if original_id and original_id in notes_data:
+                # Update existing note
+                if "filepaths" not in notes_data[original_id]:
+                    notes_data[original_id]["filepaths"] = []
+                notes_data[original_id]["filepaths"].append(new_path)
+                notes_data[original_id].update({
+                    "title": title,
+                    "date": datetime.now().strftime("%Y-%m-%d %H:%M"),
+                    "content": original_content,
+                })
+            else:
+                # Create new note
+                new_nid = note_counter[0] + 1
+                note_counter[0] = new_nid
+                notes_data[new_nid] = {
+                    "title": title,
+                    "date": datetime.now().strftime("%Y-%m-%d %H:%M"),
+                    "content": original_content,
+                    "filepaths": [new_path]
+                }
+            
+            # Remove from trash_data
+            trash_data.pop(trash_id, None)
+            
+            save_notes()
+            save_trash()
+            
             return True
     except Exception as e:
-        print(f"Error deleting file: {e}")
+        print(f"Error restoring from trash: {e}")
+    return False
+
+def permanently_delete_trash(trash_id, trash_item):
+    """Permanently delete a file from trash."""
+    try:
+        if "filepath" in trash_item and os.path.exists(trash_item["filepath"]):
+            os.remove(trash_item["filepath"])
+        trash_data.pop(trash_id, None)
+        save_trash()
+        return True
+    except Exception as e:
+        print(f"Error permanently deleting: {e}")
     return False
 
 def delete_selected_saved_note():
-    """Delete a saved note file from the folder."""
+    """Delete a saved note file by moving all its versions to trash."""
     saved_files = get_saved_notes_list()
     
     if not saved_files:
         messagebox.showinfo("No Saved Notes", "There are no saved notes to delete.")
         return
     
-    # Create a list of filenames for selection
-    file_names = [os.path.basename(f) for f in saved_files]
+    # Create a list of unique notes (group by Note ID)
+    note_groups = {}
+    for filepath in saved_files:
+        try:
+            with open(filepath, "r", encoding="utf-8") as f:
+                content = f.read()
+                # Extract Note ID
+                for line in content.split('\n'):
+                    if line.startswith("Note ID: "):
+                        note_id = int(line[9:].strip())
+                        if note_id not in note_groups:
+                            note_groups[note_id] = []
+                        note_groups[note_id].append(filepath)
+                        break
+        except:
+            # If can't read Note ID, treat as separate file
+            note_groups[filepath] = [filepath]
     
     # Create a new window for selection
     delete_window = tk.Toplevel(root)
     delete_window.title("Delete Saved Note")
-    delete_window.geometry("500x400")
+    delete_window.geometry("600x450")
     delete_window.configure(bg=DARK)
     
     delete_window.transient(root)
     delete_window.grab_set()
     
-    tk.Label(delete_window, text="Select a saved note to delete:", 
-             font=("Schoolbell", 14), bg=DARK, fg=ACCENT).pack(pady=10)
+    tk.Label(delete_window, text="Select a note to delete (all versions will be moved to trash):", 
+             font=("Schoolbell", 12), bg=DARK, fg=ACCENT, wraplength=550).pack(pady=10)
     
     frame = tk.Frame(delete_window, bg=DARK)
     frame.pack(fill="both", expand=True, padx=20, pady=10)
@@ -423,49 +728,106 @@ def delete_selected_saved_note():
     listbox.pack(side="left", fill="both", expand=True)
     scrollbar.config(command=listbox.yview)
     
-    for name in file_names:
-        listbox.insert(tk.END, name)
+    # Populate listbox with note groups
+    for item in sorted(note_groups.keys()):
+        if isinstance(item, int):
+            # Find title for this note
+            title = "Untitled"
+            for nid, note in notes_data.items():
+                if nid == item:
+                    title = note.get("title", "Untitled")
+                    break
+            version_count = len(note_groups[item])
+            listbox.insert(tk.END, f"Note #{item}: {title} ({version_count} version{'s' if version_count > 1 else ''})")
+        else:
+            filename = os.path.basename(item)
+            listbox.insert(tk.END, f"Orphaned file: {filename}")
     
     def confirm_delete():
         selection = listbox.curselection()
         if not selection:
-            messagebox.showwarning("No Selection", "Please select a file to delete.")
+            messagebox.showwarning("No Selection", "Please select a note to delete.")
             return
         
-        selected_file = saved_files[selection[0]]
-        filename = os.path.basename(selected_file)
+        selected = list(listbox.get(selection[0]).split(": "))[0]
         
+        # Find which note was selected
+        note_id_to_delete = None
+        filepaths_to_delete = []
+        
+        if selected.startswith("Note #"):
+            note_num = int(selected.split("#")[1])
+            note_id_to_delete = note_num
+            if note_num in note_groups:
+                filepaths_to_delete = note_groups[note_num]
+        else:
+            # Orphaned file
+            orphan_filename = selected.replace("Orphaned file: ", "")
+            for filepath in saved_files:
+                if os.path.basename(filepath) == orphan_filename:
+                    filepaths_to_delete = [filepath]
+                    break
+        
+        version_count = len(filepaths_to_delete)
         confirm = messagebox.askyesno(
             "Confirm Delete",
-            f"Are you sure you want to permanently delete:\n\n'{filename}'?\n\nThis action cannot be undone!",
+            f"Are you sure you want to move {version_count} version(s) of this note to trash?\n\n"
+            f"You can restore them from the Bin later.",
             parent=delete_window
         )
         
         if confirm:
-            if delete_saved_note_file(selected_file):
-                # Also remove from notes_data if it exists there
-                for nid, note in list(notes_data.items()):
-                    if note.get("filepath") == selected_file:
-                        del notes_data[nid]
-                        if active_note_id[0] == nid:
-                            active_note_id[0] = None
-                        break
-                save_notes()
-                refresh_sidebar()
-                messagebox.showinfo("Deleted", f"✓ '{filename}' has been deleted.")
-                delete_window.destroy()
+            success = True
+            # Find note data
+            note_data = notes_data.get(note_id_to_delete, {}) if note_id_to_delete else {}
+            
+            if note_id_to_delete and note_id_to_delete in notes_data:
+                # Move all versions to trash
+                if move_note_to_trash(note_id_to_delete, note_data):
+                    # Remove from notes_data
+                    del notes_data[note_id_to_delete]
+                    if active_note_id[0] == note_id_to_delete:
+                        active_note_id[0] = None
+                    save_notes()
+                    refresh_sidebar()
+                    messagebox.showinfo("Moved to Trash", 
+                                      f"✓ {version_count} version(s) of the note have been moved to trash.\n\n"
+                                      f"You can restore them from the Bin.")
+                    delete_window.destroy()
+                    
+                    # Rebuild the current note area if active note was deleted
+                    note_area = _write_refs.get("note_area")
+                    if note_area:
+                        build_note_panel(note_area)
+                else:
+                    success = False
+            elif filepaths_to_delete:
+                # Handle orphaned files (no associated note data)
+                for filepath in filepaths_to_delete:
+                    if delete_saved_note_file(filepath):
+                        # Also remove from notes_data if it exists there
+                        for nid, note in list(notes_data.items()):
+                            if "filepaths" in note and filepath in note["filepaths"]:
+                                note["filepaths"].remove(filepath)
+                                if not note["filepaths"]:
+                                    del notes_data[nid]
+                                break
+                        save_notes()
+                        refresh_sidebar()
+                    else:
+                        success = False
                 
-                # Rebuild the current note area if active note was deleted
-                note_area = _write_refs.get("note_area")
-                if note_area:
-                    build_note_panel(note_area)
-            else:
-                messagebox.showerror("Error", "Failed to delete file.")
+                if success:
+                    messagebox.showinfo("Moved to Trash", "File(s) have been moved to trash.")
+                    delete_window.destroy()
+            
+            if not success:
+                messagebox.showerror("Error", "Failed to move file(s) to trash.")
     
     btn_frame = tk.Frame(delete_window, bg=DARK)
     btn_frame.pack(pady=10)
     
-    delete_btn = tk.Button(btn_frame, text="Delete Selected", font=HAND_FONT_SM,
+    delete_btn = tk.Button(btn_frame, text="Move to Trash", font=HAND_FONT_SM,
                            bg=BTN_DELETE_BG, fg="white", relief="flat",
                            cursor="hand2", padx=20, pady=5, command=confirm_delete)
     delete_btn.pack(side="left", padx=5)
@@ -581,7 +943,6 @@ def go_to_write_interface():
     quote_text_id = my_canvas.create_text((tx1 + tx2) // 2, ty1 + TOPBAR_H // 2,
                                           text=random.choice(QUOTES), 
                                           font=("Schoolbell", 17), fill=ACCENT)
-    # Start quote rotation
     root.after(10000, rotate_quote)
 
     bin_top_btn = tk.Button(my_canvas, text="🗑️Bin", font=HAND_FONT_LG,
@@ -666,7 +1027,15 @@ def build_note_panel(parent):
 
     hf = tk.Frame(parent, bg=DARK)
     hf.pack(fill="x", padx=14, pady=(10, 2))
-    tk.Label(hf, text=f"Note {note_id}" if on else "No note selected",
+    
+    # Show version info if available
+    version_text = f"Note {note_id}"
+    if on and "filepaths" in data:
+        version_count = len(data["filepaths"])
+        if version_count > 0:
+            version_text += f" (v{version_count})"
+    
+    tk.Label(hf, text=version_text if on else "No note selected",
              font=("Schoolbell", 20, "bold"), bg=DARK, fg=ACCENT,
              anchor="w").pack(side="left")
     tk.Frame(parent, bg=BORDER_CLR, height=1).pack(fill="x", padx=8)
@@ -724,42 +1093,46 @@ def build_note_panel(parent):
     btn_bar.pack(fill="x", padx=14, pady=(0, 14))
 
     def _soft_delete():
-        """Move current note to trash and delete the file if it exists."""
+        """Move current note (all versions) to trash."""
         if active_note_id[0] is None:
             return
         
         auto_save_current_note()
         
+        note_id = active_note_id[0]
+        note_data = notes_data.get(note_id, {})
+        version_count = len(note_data.get("filepaths", []))
+        
         confirm = messagebox.askyesno("Delete Note", 
-                                      "Delete this note?\n\nThis will also delete the saved file if it exists!")
+                                      f"Move this note to Trash?\n\nThis will move {version_count if version_count > 0 else 'the'} version(s) of this note to trash.\nYou can restore it later from the Bin.")
         if not confirm:
             return
         
-        nid = active_note_id[0]
-        note = notes_data.pop(nid, {})
-        
-        # Delete the file if it exists
-        if "filepath" in note and os.path.exists(note["filepath"]):
-            try:
-                os.remove(note["filepath"])
-                print(f"Deleted file: {note['filepath']}")
-            except Exception as e:
-                print(f"Error deleting file: {e}")
-        
-        # Move to trash (for reference, but file is already deleted)
-        trash_counter[0] += 1
-        tid = trash_counter[0]
-        trash_data[tid] = {
-            "title":        note.get("title", f"Note {nid}") or f"Note {nid}",
-            "original_id":  nid,
-            "deleted_date": datetime.now().strftime("%Y-%m-%d"),
-            "content":      note.get("content", ""),
-        }
-        save_notes()
-        save_trash()
-        active_note_id[0] = None
-        refresh_sidebar()
-        build_note_panel(parent)
+        # Move to trash folder
+        if move_note_to_trash(note_id, note_data):
+            # Remove from notes_data
+            notes_data.pop(note_id, {})
+            save_notes()
+            active_note_id[0] = None
+            refresh_sidebar()
+            build_note_panel(parent)
+            messagebox.showinfo("Moved to Trash", f"✓ Note has been moved to trash.\n\nYou can restore it from the Bin.")
+        else:
+            # For unsaved notes, just add to trash_data
+            trash_counter[0] += 1
+            tid = trash_counter[0]
+            trash_data[tid] = {
+                "title":        note_data.get("title", f"Note {note_id}") or f"Note {note_id}",
+                "original_id":  note_id,
+                "deleted_date": datetime.now().strftime("%Y-%m-%d %H:%M"),
+                "content":      note_data.get("content", ""),
+            }
+            save_trash()
+            save_notes()
+            active_note_id[0] = None
+            refresh_sidebar()
+            build_note_panel(parent)
+            messagebox.showinfo("Moved to Trash", "✓ Note has been moved to trash.")
 
     def _save_note():
         if active_note_id[0] is None:
@@ -781,7 +1154,7 @@ def build_note_panel(parent):
     save_btn.bind("<Leave>", lambda e: on_leave_dark(save_btn, BTN_SAVE_BG) if on else None)
     save_btn.pack(side="left", expand=True, fill="x", padx=(0, 6))
 
-    # Delete button - now deletes file and removes from sidebar
+    # Delete button - now moves all versions to trash
     del_btn = tk.Button(btn_bar, text="🗑 Delete",
                         font=("Schoolbell", 15, "bold"),
                         bg=BTN_DELETE_BG, fg="white",
@@ -808,9 +1181,11 @@ def refresh_sidebar():
         bg_c       = ACTIVE_TAB if is_active else DARK
         label_text = notes_data[nid].get("title", "").strip() or f"Note {nid}"
         
-        # Add a bookmark icon for saved files
-        if "filepath" in notes_data[nid]:
-            label_text = f"📄 {label_text}"
+        # Add version indicator if multiple versions exist
+        if "filepaths" in notes_data[nid]:
+            version_count = len(notes_data[nid]["filepaths"])
+            if version_count > 0:
+                label_text = f"📄 {label_text} ({version_count})"
 
         btn = tk.Button(inner_frame, text=label_text, font=HAND_FONT,
                         bg=bg_c, fg=ACCENT,
@@ -935,27 +1310,23 @@ def go_to_bin_interface():
             item  = trash_data[tid]
             title = item.get("title", f"Note {tid}")
             date  = item.get("deleted_date", "?")
+            version_info = f" ({item.get('version_count', 1)} version(s))" if item.get('version_count', 1) > 1 else ""
 
             row = tk.Frame(rows_frame, bg=SEMI_DARK)
             row.pack(fill="x", padx=10, pady=5)
 
-            tk.Label(row, text=title, font=HAND_FONT, bg=SEMI_DARK, fg=ACCENT,
+            tk.Label(row, text=f"{title}{version_info}", font=HAND_FONT, bg=SEMI_DARK, fg=ACCENT,
                      anchor="w", width=25).pack(side="left", padx=(10, 10))
             tk.Label(row, text=f"🗑 {date}", font=HAND_FONT_SM, bg=SEMI_DARK,
                      fg="#aaa", anchor="w", width=15).pack(side="left", padx=(0, 10))
 
             def _restore(t=tid):
-                item = trash_data.pop(t, {})
-                note_counter[0] += 1
-                nid = note_counter[0]
-                notes_data[nid] = {
-                    "title":   item.get("title", f"Note {nid}"),
-                    "date":    datetime.now().strftime("%Y-%m-%d %H:%M"),
-                    "content": item.get("content", ""),
-                }
-                save_notes()
-                save_trash()
-                _rebuild_rows()
+                item = trash_data.get(t, {})
+                if restore_from_trash(t, item):
+                    _rebuild_rows()
+                    messagebox.showinfo("Restored", f"✓ '{item.get('title', 'Note')}' has been restored to Saved Notes.")
+                else:
+                    messagebox.showerror("Error", "Failed to restore note.")
 
             restore_btn = tk.Button(row, text="↩️ Restore", font=HAND_FONT_SM,
                                     bg=BTN_SAVE_BG, fg="white",
@@ -967,11 +1338,14 @@ def go_to_bin_interface():
             def _perm_delete(t=tid, title=title):
                 confirm = messagebox.askyesno(
                     "⚠️ Permanent Delete",
-                    f"Permanently delete '{title}'?\n\nThis action cannot be undone!")
+                    f"Permanently delete '{title}' from trash?\n\nThis action cannot be undone!")
                 if confirm:
-                    trash_data.pop(t, None)
-                    save_trash()
-                    _rebuild_rows()
+                    item = trash_data.get(t, {})
+                    if permanently_delete_trash(t, item):
+                        _rebuild_rows()
+                        messagebox.showinfo("Deleted", f"✓ '{title}' has been permanently deleted.")
+                    else:
+                        messagebox.showerror("Error", "Failed to delete file.")
 
             del_btn = tk.Button(row, text="🗑️Delete", font=HAND_FONT_SM,
                                 bg=BTN_DELETE_BG, fg="white",
