@@ -566,7 +566,7 @@ def go_to_write_interface():
                                 command=save_note_to_folder)
     save_folder_btn.bind("<Enter>", lambda e: on_hover_dark(save_folder_btn, BTN_PRIMARY_HOV))
     save_folder_btn.bind("<Leave>", lambda e: on_leave_dark(save_folder_btn, BTN_PRIMARY_BG))
-    my_canvas.create_window(tx1 + 210, ty1 + TOPBAR_H // 2, window=save_folder_btn)
+    my_canvas.create_window(tx1 + 185, ty1 + TOPBAR_H // 2, window=save_folder_btn)
     
     delete_folder_btn = tk.Button(my_canvas, text="🗑️Delete", font=HAND_FONT_LG,
                                   bg=BTN_PRIMARY_BG, fg=ACCENT, relief="flat", cursor="hand2",
@@ -574,7 +574,7 @@ def go_to_write_interface():
                                   command=delete_selected_saved_note)
     delete_folder_btn.bind("<Enter>", lambda e: on_hover_dark(delete_folder_btn, BTN_PRIMARY_HOV))
     delete_folder_btn.bind("<Leave>", lambda e: on_leave_dark(delete_folder_btn, BTN_PRIMARY_BG))
-    my_canvas.create_window(tx1 + 340, ty1 + TOPBAR_H // 2, window=delete_folder_btn)
+    my_canvas.create_window(tx1 + 317, ty1 + TOPBAR_H // 2, window=delete_folder_btn)
 
     # Random quote with rotation
     global quote_text_id
@@ -973,7 +973,7 @@ def go_to_bin_interface():
                     save_trash()
                     _rebuild_rows()
 
-            del_btn = tk.Button(row, text="🗑️ Delete", font=HAND_FONT_SM,
+            del_btn = tk.Button(row, text="🗑️Delete", font=HAND_FONT_SM,
                                 bg=BTN_DELETE_BG, fg="white",
                                 activebackground=BTN_DELETE_HOV,
                                 relief="flat", cursor="hand2", padx=12, pady=5,
