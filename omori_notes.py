@@ -1394,10 +1394,10 @@ def go_to_main_interface():
     my_canvas.omori_letters = omori_letters_img  # Keep reference
     
     # Load and display the OMORI character image in the box (center)
-    omori_character = Image.open("bgi/Omori_icon_app.png").convert("RGBA")
-    omori_character_resized = omori_character.resize((250, 250))
+    omori_character = Image.open("bgi/Adobe Express.png").convert("RGBA")
+    omori_character_resized = omori_character.resize((200, 200))
     omori_character_img = ImageTk.PhotoImage(omori_character_resized)
-    my_canvas.create_image(int(screen_width * 0.50), int(screen_height * 0.52),  # Changed to 0.52 to be under the letters
+    my_canvas.create_image(int(screen_width * 0.51), int(screen_height * 0.45),  # Changed to 0.51 and 0.45
                            image=omori_character_img, anchor="center")
     my_canvas.omori_character = omori_character_img  # Keep reference
 
@@ -1477,9 +1477,9 @@ my_canvas.omori_letters = omori_letters_img
 
 # Load and display OMORI character image in the box
 omori_character = Image.open("bgi/Adobe Express.png").convert("RGBA")
-omori_character_resized = omori_character.resize((250, 250))
+omori_character_resized = omori_character.resize((200, 200))
 omori_character_img = ImageTk.PhotoImage(omori_character_resized)
-my_canvas.create_image(int(screen_width * 0.50), int(screen_height * 0.52),
+my_canvas.create_image(int(screen_width * 0.51), int(screen_height * 0.45),
                        image=omori_character_img, anchor="center")
 my_canvas.omori_character = omori_character_img
 
