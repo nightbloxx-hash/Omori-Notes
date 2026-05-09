@@ -17,7 +17,7 @@ QUOTES = [
     "Silence speaks in writing.",
     "Capture the moment.",
     "Thoughts become words.",
-    "Write your own world."
+    "Write your own world.", 
 ]
 
 # ─── VERSION CHECK ───────────────────────────────────────────────
@@ -1382,12 +1382,28 @@ def go_to_main_interface():
     my_canvas.delete("all")
     my_canvas.configure(bg="black")
 
+    # Restore original background
     my_canvas.create_image(screen_width // 2, screen_height // 2, image=bg, anchor="center")
-    my_canvas.create_image(int(screen_width * 0.49), int(screen_height * 0.45),
-                            image=char_img, anchor="center")
+    
+    # Load and display the OMORI logo (letters) at the top
+    omori_letters = Image.open("bgi/Omori_logo.png").convert("RGBA")
+    omori_letters_resized = omori_letters.resize((700, 300))
+    omori_letters_img = ImageTk.PhotoImage(omori_letters_resized)
+    my_canvas.create_image(int(screen_width * 0.50), int(screen_height * 0.20),
+                           image=omori_letters_img, anchor="center")
+    my_canvas.omori_letters = omori_letters_img  # Keep reference
+    
+    # Load and display the OMORI character image in the box (center)
+    omori_character = Image.open("bgi/Omori_icon_app.png").convert("RGBA")
+    omori_character_resized = omori_character.resize((250, 250))
+    omori_character_img = ImageTk.PhotoImage(omori_character_resized)
+    my_canvas.create_image(int(screen_width * 0.50), int(screen_height * 0.52),  # Changed to 0.52 to be under the letters
+                           image=omori_character_img, anchor="center")
+    my_canvas.omori_character = omori_character_img  # Keep reference
 
     global write_frame, exit_frame, music_icon
 
+    # Create Write button
     write_frame = tk.Frame(my_canvas, bg="white", padx=4, pady=4)
     wb = tk.Button(write_frame, text="Write", font=btn_font,
                    bg="black", fg="white", relief="flat", width=10, height=2,
@@ -1396,6 +1412,7 @@ def go_to_main_interface():
     wb.bind("<Leave>", lambda e: on_leave(wb))
     wb.pack()
 
+    # Create Exit button
     exit_frame = tk.Frame(my_canvas, bg="white", padx=4, pady=4)
     eb = tk.Button(exit_frame, text="Exit", font=btn_font,
                    bg="black", fg="white", relief="flat", width=10, height=2,
@@ -1404,6 +1421,7 @@ def go_to_main_interface():
     eb.bind("<Leave>", lambda e: on_leave(eb))
     eb.pack()
 
+    # Position buttons
     ww = my_canvas.create_window(0, 0, window=write_frame)
     ew = my_canvas.create_window(0, 0, window=exit_frame)
 
@@ -1415,6 +1433,7 @@ def go_to_main_interface():
     _place()
     root.bind("<Configure>", lambda e: _place())
 
+    # Recreate music icon
     music_icon = my_canvas.create_image(
         int(screen_width * 1.0), int(screen_height * -0.04),
         image=logo_img, anchor="ne")
@@ -1448,10 +1467,23 @@ my_canvas.create_image(screen_width // 2, screen_height // 2, image=bg, anchor="
 
 btn_font = ("Schoolbell", 20)
 
-char_img = tk.PhotoImage(file="bgi/omori_logo.png")
-my_canvas.create_image(int(screen_width * 0.49), int(screen_height * 0.45),
-                        image=char_img, anchor="center")
+# Load and display OMORI letters logo at the top
+omori_letters = Image.open("bgi/Omori_logo.png").convert("RGBA")
+omori_letters_resized = omori_letters.resize((700, 300))
+omori_letters_img = ImageTk.PhotoImage(omori_letters_resized)
+my_canvas.create_image(int(screen_width * 0.50), int(screen_height * 0.20),
+                       image=omori_letters_img, anchor="center")
+my_canvas.omori_letters = omori_letters_img
 
+# Load and display OMORI character image in the box
+omori_character = Image.open("bgi/Adobe Express.png").convert("RGBA")
+omori_character_resized = omori_character.resize((250, 250))
+omori_character_img = ImageTk.PhotoImage(omori_character_resized)
+my_canvas.create_image(int(screen_width * 0.50), int(screen_height * 0.52),
+                       image=omori_character_img, anchor="center")
+my_canvas.omori_character = omori_character_img
+
+# Music logo
 logo_pil = Image.open("bgi/music_logo.png").convert("RGBA").resize((300, 300))
 logo_img = ImageTk.PhotoImage(logo_pil)
 music_icon = my_canvas.create_image(
@@ -1465,29 +1497,31 @@ def _open_bgm_boot(event=None):
 
 my_canvas.tag_bind(music_icon, "<Button-1>", _open_bgm_boot)
 
+# Create Write button
 write_frame = tk.Frame(my_canvas, bg="white", padx=4, pady=4)
-write_btn   = tk.Button(write_frame, text="Write", font=btn_font,
-                        bg="black", fg="white", relief="flat", width=10, height=2,
-                        command=go_to_write_interface)
+write_btn = tk.Button(write_frame, text="Write", font=btn_font,
+                      bg="black", fg="white", relief="flat", width=10, height=2,
+                      command=go_to_write_interface)
 write_btn.bind("<Enter>", lambda e: [play_hover(), on_hover(write_btn)])
 write_btn.bind("<Leave>", lambda e: on_leave(write_btn))
 write_btn.pack()
 
+# Create Exit button
 exit_frame = tk.Frame(my_canvas, bg="white", padx=4, pady=4)
-exit_btn   = tk.Button(exit_frame, text="Exit", font=btn_font,
-                       bg="black", fg="white", relief="flat", width=10, height=2,
-                       command=lambda: [auto_save_current_note(), play_click(), root.destroy()])
+exit_btn = tk.Button(exit_frame, text="Exit", font=btn_font,
+                     bg="black", fg="white", relief="flat", width=10, height=2,
+                     command=lambda: [auto_save_current_note(), play_click(), root.destroy()])
 exit_btn.bind("<Enter>", lambda e: [play_hover(), on_hover(exit_btn)])
 exit_btn.bind("<Leave>", lambda e: on_leave(exit_btn))
 exit_btn.pack()
 
 write_window = my_canvas.create_window(0, 0, window=write_frame)
-exit_window  = my_canvas.create_window(0, 0, window=exit_frame)
+exit_window = my_canvas.create_window(0, 0, window=exit_frame)
 
 def place_buttons():
     w, h = root.winfo_width(), root.winfo_height()
     my_canvas.coords(write_window, int(w * 0.41), int(h * 0.82))
-    my_canvas.coords(exit_window,  int(w * 0.61), int(h * 0.82))
+    my_canvas.coords(exit_window, int(w * 0.61), int(h * 0.82))
 
 place_buttons()
 root.bind("<Configure>", lambda e: place_buttons())
