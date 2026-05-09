@@ -1385,22 +1385,28 @@ def go_to_main_interface():
     # Restore original background
     my_canvas.create_image(screen_width // 2, screen_height // 2, image=bg, anchor="center")
     
-    # Load and display the OMORI logo (letters) at the top
-    omori_letters = Image.open("bgi/Omori_logo.png").convert("RGBA")
-    omori_letters_resized = omori_letters.resize((700, 300))
-    omori_letters_img = ImageTk.PhotoImage(omori_letters_resized)
-    my_canvas.create_image(int(screen_width * 0.50), int(screen_height * 0.20),
-                           image=omori_letters_img, anchor="center")
-    my_canvas.omori_letters = omori_letters_img  # Keep reference
-    
-    # Load and display the OMORI character image in the box (center)
-    omori_character = Image.open("bgi/Adobe Express.png").convert("RGBA")
-    omori_character_resized = omori_character.resize((200, 200))
-    omori_character_img = ImageTk.PhotoImage(omori_character_resized)
-    my_canvas.create_image(int(screen_width * 0.51), int(screen_height * 0.45),  # Changed to 0.51 and 0.45
-                           image=omori_character_img, anchor="center")
-    my_canvas.omori_character = omori_character_img  # Keep reference
+    # ── FIXED sizes (won't change with resolution) ──
+    LOGO_SIZE      = (500, 180)
+    CHARACTER_SIZE = (110, 110)
 
+    CX     = screen_width  // 2
+    CY     = screen_height // 2
+    LOGO_X = CX - 80
+    LOGO_Y = CY - 130
+    CHAR_X = LOGO_X + 340
+    CHAR_Y = LOGO_Y
+
+    omori_letters = Image.open("bgi/Omori_logo.png").convert("RGBA")
+    omori_letters_resized = omori_letters.resize(LOGO_SIZE, Image.Resampling.LANCZOS)
+    omori_letters_img = ImageTk.PhotoImage(omori_letters_resized)
+    my_canvas.create_image(LOGO_X, LOGO_Y, image=omori_letters_img, anchor="center")
+    my_canvas.omori_letters = omori_letters_img
+
+    omori_character = Image.open("bgi/Adobe Express.png").convert("RGBA")
+    omori_character_resized = omori_character.resize(CHARACTER_SIZE, Image.Resampling.LANCZOS)
+    omori_character_img = ImageTk.PhotoImage(omori_character_resized)
+    my_canvas.create_image(CHAR_X, CHAR_Y, image=omori_character_img, anchor="center")
+    my_canvas.omori_character = omori_character_img
     global write_frame, exit_frame, music_icon
 
     # Create Write button
@@ -1467,20 +1473,28 @@ my_canvas.create_image(screen_width // 2, screen_height // 2, image=bg, anchor="
 
 btn_font = ("Schoolbell", 20)
 
-# Load and display OMORI letters logo at the top
+# ── FIXED sizes (won't change with resolution) ──
+LOGO_SIZE      = (500, 180)
+CHARACTER_SIZE = (110, 110)
+
+# Always centered regardless of resolution
+CX     = screen_width  // 2
+CY     = screen_height // 2
+LOGO_X = CX - 80    # OMORI text slightly left of center
+LOGO_Y = CY - 130
+CHAR_X = LOGO_X + 340  # Notes icon right next to OMORI text
+CHAR_Y = LOGO_Y        # same height
+
 omori_letters = Image.open("bgi/Omori_logo.png").convert("RGBA")
-omori_letters_resized = omori_letters.resize((700, 300))
+omori_letters_resized = omori_letters.resize(LOGO_SIZE, Image.Resampling.LANCZOS)
 omori_letters_img = ImageTk.PhotoImage(omori_letters_resized)
-my_canvas.create_image(int(screen_width * 0.50), int(screen_height * 0.20),
-                       image=omori_letters_img, anchor="center")
+my_canvas.create_image(LOGO_X, LOGO_Y, image=omori_letters_img, anchor="center")
 my_canvas.omori_letters = omori_letters_img
 
-# Load and display OMORI character image in the box
 omori_character = Image.open("bgi/Adobe Express.png").convert("RGBA")
-omori_character_resized = omori_character.resize((200, 200))
+omori_character_resized = omori_character.resize(CHARACTER_SIZE, Image.Resampling.LANCZOS)
 omori_character_img = ImageTk.PhotoImage(omori_character_resized)
-my_canvas.create_image(int(screen_width * 0.51), int(screen_height * 0.45),
-                       image=omori_character_img, anchor="center")
+my_canvas.create_image(CHAR_X, CHAR_Y, image=omori_character_img, anchor="center")
 my_canvas.omori_character = omori_character_img
 
 # Music logo
